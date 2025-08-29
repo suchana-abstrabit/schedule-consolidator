@@ -98,6 +98,23 @@ def find_required_columns(df):
                 break
     return found_columns
 
+def create_match_count_summary(df):
+    """
+    Create a summary showing match counts by date.
+    """
+    if df is None or df.empty:
+        return None
+    
+    # Group by date and count matches
+    date_counts = df.groupby('Date').size().reset_index(name='Match Count')
+    
+    # Sort by the original date order from the main dataframe
+    unique_dates = df['Date'].unique()
+    date_counts['sort_order'] = date_counts['Date'].map({date: i for i, date in enumerate(unique_dates)})
+    date_counts = date_counts.sort_values('sort_order').drop('sort_order', axis=1)
+    
+    return date_counts
+
 def combine_and_sort_schedules(uploaded_files):
     """
     Combines, correctly sorts, and displays data while preserving original date formats.
@@ -180,21 +197,65 @@ if uploaded_files:
         combined_schedule = combine_and_sort_schedules(uploaded_files)
     
     if combined_schedule is not None and not combined_schedule.empty:
-        st.subheader("Combined Master Schedule")
-        # --- FIX for Deprecation Warning ---
-        st.dataframe(combined_schedule, hide_index=True, use_container_width=True)
+        # Create and display match count summary
+        match_count_summary = create_match_count_summary(combined_schedule)
+        
+        col1, col2 = st.columns([1, 2])
+        
+        with col1:
+            st.subheader("📊 Matches per Date")
+            if match_count_summary is not None:
+                st.dataframe(
+                    match_count_summary, 
+                    hide_index=True, 
+                    use_container_width=True,
+                    column_config={
+                        "Date": st.column_config.TextColumn("Date"),
+                        "Match Count": st.column_config.NumberColumn("Matches", format="%d")
+                    }
+                )
+                
+                # Show total matches
+                total_matches = match_count_summary['Match Count'].sum()
+                st.metric("Total Matches", total_matches)
+        
+        with col2:
+            st.subheader("🗓️ Complete Schedule")
+            # --- FIX for Deprecation Warning ---
+            st.dataframe(combined_schedule, hide_index=True, use_container_width=True)
         
         # --- FIX for Excel Download ---
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # Write the main schedule
             combined_schedule.to_excel(writer, index=False, sheet_name='Schedule')
+            # Write the match count summary to a separate sheet
+            if match_count_summary is not None:
+                match_count_summary.to_excel(writer, index=False, sheet_name='Match Counts')
 
         st.download_button(
-            label="Download Schedule as Excel",
+            label="📥 Download Schedule as Excel",
             data=output,
             file_name=f"combined_macu_schedule_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        
+        # Display some useful statistics
+        st.subheader("📈 Schedule Statistics")
+        stats_col1, stats_col2, stats_col3 = st.columns(3)
+        
+        with stats_col1:
+            unique_teams = combined_schedule['MACU Team'].nunique()
+            st.metric("Teams", unique_teams)
+        
+        with stats_col2:
+            unique_dates = combined_schedule['Date'].nunique()
+            st.metric("Competition Days", unique_dates)
+        
+        with stats_col3:
+            avg_matches_per_date = round(total_matches / unique_dates, 1) if unique_dates > 0 else 0
+            st.metric("Avg Matches/Day", avg_matches_per_date)
+            
     else:
         st.error("No valid schedule data could be extracted. Please check file formats and column names.")
 else:
